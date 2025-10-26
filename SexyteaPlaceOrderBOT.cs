@@ -56,6 +56,13 @@ namespace PlaceOrderBOT
                     return (false, respOrderCreate.Item2);
                 }
 
+                if(coupon.AvailableBalance < respOrderCreate.Item3)
+                {
+                    string msg = $"SexyteaPlaceOrderBOT.PlaceOrder 茶颜订单停止下单，创建订单的金额[{respOrderCreate.Item3}] 超出可用余额[{coupon.AvailableBalance}] tid:[{eo.Tid}]";
+                    _logger.Error(msg);
+                    return (false, msg);
+                }
+
 
                 //此时订单已经创建成功
                 var orderNo = respOrderCreate.Item2;
