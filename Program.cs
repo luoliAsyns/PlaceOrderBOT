@@ -1,22 +1,32 @@
-﻿using LuoliHelper.DBModels;
-using LuoliHelper.Entities;
-using LuoliHelper.Entities.Sexytea;
-using LuoliHelper.Enums;
-using LuoliHelper.StaticClasses;
-using LuoliHelper.ThirdApis;
+﻿using LuoliCommon;
+using LuoliCommon.DTO.ConsumeInfo.Sexytea;
+using LuoliCommon.DTO.Coupon;
+using LuoliCommon.DTO.ExternalOrder;
+using LuoliCommon.Enums;
+using LuoliCommon.Logger;
 using LuoliHelper.Utils;
-using PlaceOrderBOT.Sexytea;
-using SqlSugar;
+using LuoliUtils;
+using Microsoft.AspNetCore.Connections;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using RabbitMQ.Client;
 using System.Reflection;
+using System.ServiceModel.Channels;
+using System.Text.Json;
+using ThirdApis;
+using IChannel = RabbitMQ.Client.IChannel;
+using IConnectionFactory = RabbitMQ.Client.IConnectionFactory;
 
 namespace PlaceOrderBOT
 {
     internal class Program
     {
-        public static Config Config;
+        private static ILogger _logger;
+        public static Config Config { get; set; }
+        private static RabbitMQConnection RabbitMQConnection { get; set; }
+        private static RedisConnection RedisConnection { get; set; }
 
-        public static SqlSugarScope SqlClient;
-        public static RabbitMQConnection RabbitMQ;
+
 
         public static IPlaceOrderBOT Bot;
 
@@ -26,8 +36,9 @@ namespace PlaceOrderBOT
 
         private static bool init()
         {
+            Console.OutputEncoding = System.Text.Encoding.UTF8;
             bool result = false;
-            string configFolder = "configs";
+            string configFolder = "/app/PlaceOrderBOT/configs";
 
 #if DEBUG
             configFolder = "debugConfigs";
@@ -39,10 +50,12 @@ namespace PlaceOrderBOT
 
                 NotifyUsers = Config.KVPairs["NotifyUsers"].Split(',').Select(s=>s.Trim()).Where(s=>!String.IsNullOrEmpty(s)).ToList();
 
-                new RedisConnection($"{configFolder}/redis.json");
-                SqlClient = new DBConnection($"{configFolder}/database.json").SqlClient;
-                RabbitMQ = new RabbitMQConnection($"{configFolder}/rabbitmq.json");
+                RabbitMQConnection = new RabbitMQConnection($"{configFolder}/rabbitmq.json");
+                RedisConnection = new RedisConnection($"{configFolder}/redis.json");
 
+                var rds = new CSRedis.CSRedisClient(
+                    $"{RedisConnection.Host}:{RedisConnection.Port},password={RedisConnection.Password},defaultDatabase={RedisConnection.DatabaseId}");
+                RedisHelper.Initialization(rds);
                 result = true;
             });
 
@@ -55,22 +68,6 @@ namespace PlaceOrderBOT
 
             Environment.CurrentDirectory = AppContext.BaseDirectory;
 
-            var assembly = Assembly.GetExecutingAssembly();
-            var fileVersionInfo = System.Diagnostics.FileVersionInfo.GetVersionInfo(assembly.Location);
-            var fileVersion = fileVersionInfo.FileVersion;
-
-            SLogger.Info($"CurrentDirectory:[{Environment.CurrentDirectory}]");
-            SLogger.Info($"Current File Version:[{fileVersion}]");
-
-
-            if (!(args is null) && args.Length > 0 && args[0] == "AutoStart")
-            {
-                SLogger.WriteInConsole = false;
-            }
-
-            SLogger.Debug($"WriteInConsole:[{SLogger.WriteInConsole}]");
-
-
             if (!init())
             {
                 throw new Exception("initial failed; cannot start");
@@ -79,119 +76,191 @@ namespace PlaceOrderBOT
             #endregion
 
 
-            await ApiCaller.NotifyAsync($"{Config.ServiceName}.{Config.ServiceId} 启动了", NotifyUsers);
+            var services = new ServiceCollection();
 
-          
+            #region add ILogger
+
+            services.AddHttpClient("LokiHttpClient")
+                .ConfigureHttpClient(client =>
+                {
+                    // client.DefaultRequestHeaders.Add("X-Custom-Header", "luoli-app");
+                });
+
+            // 添加 luoli的 ILogger   loki logger
+            services.AddSingleton<LuoliCommon.Logger.ILogger, LokiLogger>(provider =>
+            {
+                var httpClient = provider.GetRequiredService<IHttpClientFactory>()
+                    .CreateClient("LokiHttpClient");
+
+                var dict = new Dictionary<string, string>();
+                dict["app"] = Config.ServiceName;
+
+                var loki = new LokiLogger(Config.KVPairs["LokiEndPoint"],
+                    dict,
+                    httpClient);
+                loki.AfterLog = (msg) => Console.WriteLine(msg);
+                return loki;
+            });
+
+            #endregion
+
+            #region  add rabbitmq
+
+            services.AddSingleton<IConnectionFactory>(provider =>
+            {
+                return new ConnectionFactory
+                {
+                    HostName = RabbitMQConnection.Host,
+                    Port = RabbitMQConnection.Port,
+                    UserName = RabbitMQConnection.UserId,
+                    Password = RabbitMQConnection.UserId,
+                    VirtualHost = "/",
+                    AutomaticRecoveryEnabled = true,
+                    NetworkRecoveryInterval = TimeSpan.FromSeconds(5)
+                };
+            });
+
+            services.AddSingleton<IConnection>(provider =>
+            {
+                var factory = provider.GetRequiredService<IConnectionFactory>();
+                return factory.CreateConnectionAsync().Result;
+            });
+
+            services.AddSingleton<IChannel>(provider =>
+            {
+                var connection = provider.GetRequiredService<IConnection>();
+                return connection.CreateChannelAsync().Result;
+            });
+
+            #endregion
+
+            services.AddScoped<AsynsApis>(prov =>
+            {
+                ILogger logger = prov.GetRequiredService<ILogger>();
+#if DEBUG
+                return new AsynsApis(logger, Config.KVPairs["AsynsApiUrl"]);
+#endif
+                return new AsynsApis(logger, string.Empty);
+            });
+            services.AddScoped<SexyteaApis>();
+            services.AddScoped<IPlaceOrderBOT, SexyteaPlaceOrderBOT>();
+            //消费消息
+            services.AddHostedService<ConsumerService>();
+
+
+            ServiceLocator.Initialize(services.BuildServiceProvider());
+
+            _logger = ServiceLocator.GetService<LuoliCommon.Logger.ILogger>();
+
+            #region luoli code
+
+            // 应用启动后，通过服务容器获取 LokiLogger 实例
+            var prov = services.BuildServiceProvider();
+
+            try
+            {
+                // 获取 LokiLogger 实例
+                var lokiLogger = prov.GetRequiredService<LuoliCommon.Logger.ILogger>();
+
+                // 记录启动日志
+                lokiLogger.Info($"{Config.ServiceName}启动成功");
+
+                var assembly = Assembly.GetExecutingAssembly();
+                var fileVersionInfo = System.Diagnostics.FileVersionInfo.GetVersionInfo(assembly.Location);
+                var fileVersion = fileVersionInfo.FileVersion;
+
+                lokiLogger.Info($"CurrentDirectory:[{Environment.CurrentDirectory}]");
+                lokiLogger.Info($"Current File Version:[{fileVersion}]");
+
+                await ApiCaller.NotifyAsync($"{Config.ServiceName}.{Config.ServiceId} v{fileVersion} 启动了", NotifyUsers);
+
+            }
+            catch (Exception ex)
+            {
+                // 启动日志失败时降级输出
+                Console.WriteLine($"启动日志记录失败：{ex.Message}");
+            }
+
+            #endregion
 
             int count = 0;
             int successCount = 0;
 
-            //5秒发一次心跳给茶颜
-            Task.Run(async () =>
+            var hostedServices = prov.GetServices<IHostedService>();
+            foreach (var hostedService in hostedServices)
             {
-                while (true)
-                {
-                    try
-                    {
-                        var account = RedisHelper.Get<SexyteaAccount>("Agenter.token");
-                        var heartbeatResult = await SexyteaApis.Heartbeat(account);
-                        if (heartbeatResult)
-                            successCount++;
-                        count++;
+                // 启动后台服务（触发 StartAsync -> ExecuteAsync）
+                await hostedService.StartAsync(CancellationToken.None);
+            }
 
-                        Console.WriteLine($"{successCount} / {count}");
-                        await Task.Delay(5000);
-                    }
-                    catch (Exception ex)
-                    {
-                        SLogger.Warn("while send heartbeat with  SexyteaApis.Heartbeat");
-                        SLogger.Warn(ex.Message);
-                    }
-
-                }
-            });
-
-            if (Config.KVPairs["BOTType"] == "Sexytea")
-                Bot = new SexyteaPlaceOrderBOT();
-            else
-                throw new Exception($"unknown BOTType:{Config.KVPairs["BOTType"]}");
-
-
-            Action<ulong, string> foundMsg =  (tag, msg) =>
+            // 7. 保持程序运行（否则控制台会直接退出）
+            Console.WriteLine("按 Ctrl+C 退出...");
+            var cancellationTokenSource = new CancellationTokenSource();
+            Console.CancelKeyPress += (sender, e) =>
             {
-                try
-                {
-
-                    SLogger.Info($"发现订单号:{msg}, 开始处理");
-
-                    MOrder order = SqlClient.Queryable<MOrder>().Where(O => O.order_no == msg).First();
-
-                    var (validateResult,validateMsg) =  Bot.Validate(order).Result;
-                    if(!validateResult)
-                    {
-                        SLogger.Error($"订单校验失败:{validateMsg}");
-                        Notify(order, $"订单校验失败:{validateMsg}");
-                        //通知页面刷新
-                        RedisHelper.Publish(RedisKeys.CouponChanged, order.consume_coupon);
-                        return;
-                    }
-
-                    var (placeResult, placeMsg) =  Bot.PlaceOrder(order).Result;
-                    if (!placeResult)
-                    {
-                        SLogger.Error($"下单失败:{placeMsg},订单 订单号:{order.order_no}, 已付金额:{order.pay_amount}");
-                        Notify(order, $"下单失败:{placeMsg}");
-                        //通知页面刷新
-                        RedisHelper.Publish(RedisKeys.CouponChanged, order.consume_coupon);
-                        return;
-                    }
-                    
-                    var (updateResult, updateMsg) =  Bot.UpdateResult(order).Result;
-                    if (!updateResult)
-                    {
-                        SLogger.Error($"更新订单状态失败:{updateMsg},订单 订单号:{order.order_no}, 已付金额:{order.pay_amount}");
-                        Notify(order, $"更新订单状态失败:{updateMsg}");
-                        //通知页面刷新
-                        RedisHelper.Publish(RedisKeys.CouponChanged, order.consume_coupon);
-                        return;
-                    }
-
-                    SLogger.Info($"订单完成 订单号:{order.order_no}, 已付金额:{order.pay_amount}");
-                    //通知页面刷新
-                    RedisHelper.Publish(RedisKeys.CouponChanged, order.consume_coupon);
-                    RabbitMQ.Channel.BasicAckAsync(tag, false);
-                }
-                catch(Exception ex)
-                {
-                    SLogger.Error($"MQ 消费过程中异常，message:[{msg}]");
-                    SLogger.Error(ex.Message);
-                    ApiCaller.NotifyAsync(
-@$"{Config.ServiceName}.{Config.ServiceId}
-MQ 消费过程中异常
-
-message:[{msg}]", NotifyUsers);
-
-                }
-
-              
+                e.Cancel = true; // 取消默认退出行为
+                cancellationTokenSource.Cancel(); // 触发 cancellationToken
             };
 
-            RabbitMQ.Subscribe(Bot.QueueName, foundMsg);
+            // 等待退出信号
+            await Task.Delay(Timeout.Infinite, cancellationTokenSource.Token)
+                .ContinueWith(_ => Task.CompletedTask); // 忽略取消异常
+
+            // 8. 停止后台服务（优雅退出）
+            foreach (var hostedService in hostedServices)
+            {
+                await hostedService.StopAsync(CancellationToken.None);
+            }
+
+
+
+            //5秒发一次心跳给茶颜
+            //Task.Run(async () =>
+            //{
+            //    while (true)
+            //    {
+            //        try
+            //        {
+            //            var account = RedisHelper.Get<Account>("Agenter.token");
+            //            var heartbeatResult = await SexyteaApis.Heartbeat(account);
+            //            if (heartbeatResult)
+            //                successCount++;
+            //            count++;
+
+            //            Console.WriteLine($"{successCount} / {count}");
+            //            await Task.Delay(5000);
+            //        }
+            //        catch (Exception ex)
+            //        {
+            //            _logger.Warn("while send heartbeat with  SexyteaApis.Heartbeat");
+            //            _logger.Warn(ex.Message);
+            //        }
+
+            //    }
+            //});
+
+            //if (Config.KVPairs["BOTType"] == "Sexytea")
+            //    Bot = new SexyteaPlaceOrderBOT();
+            //else
+            //    throw new Exception($"unknown BOTType:{Config.KVPairs["BOTType"]}");
+
 
             Console.ReadLine();
         }
 
 
-        private static void Notify(MOrder order, string coreMsg)
+        public static void Notify(CouponDTO coupon, ExternalOrderDTO externalOrder, string coreMsg)
         {
             ApiCaller.NotifyAsync(
-@$"{Config.ServiceName}.{Config.ServiceId}
+                @$"{Config.ServiceName}.{Config.ServiceId}
 {coreMsg}
 
-订单号:{order.order_no}
-订单状态:{SEnum2Dict.GetDescription((EOrderStatus)order.order_status)}
-卡密状态:{SEnum2Dict.GetDescription((ECouponStatus)order.consume_coupon_status)}
-已付金额:{order.pay_amount}", NotifyUsers);
+卡密:{coupon.Coupon}
+卡密状态:{EnumHandler.GetDescription((ECouponStatus)coupon.Status)}
+卡密金额:{coupon.AvailableBalance}/{coupon.Payment}
+卡密绑定订单:{coupon.ExternalOrderFromPlatform} - {coupon.ExternalOrderTid}
+订单金额:{externalOrder.PayAmount}
+订单内容:{JsonSerializer.Serialize(externalOrder.SubOrders)}", NotifyUsers);
         }
     }
 }

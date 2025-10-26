@@ -5,10 +5,20 @@
     <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <AssemblyVersion>25</AssemblyVersion>
+    <FileVersion>25.10.26.1</FileVersion>
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\LuoliHelper\LuoliHelper.csproj" />
+    <PackageReference Include="CSRedisCore" Version="3.8.806" />
+    <PackageReference Include="RabbitMQ.Client" Version="7.1.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\Common\LuoliCommon\LuoliCommon.csproj" />
+    <ProjectReference Include="..\..\Common\LuoliDatabase\LuoliDatabase.csproj" />
+    <ProjectReference Include="..\..\Common\LuoliUtils\LuoliUtils.csproj" />
+    <ProjectReference Include="..\..\Common\ThirdApis\ThirdApis.csproj" />
   </ItemGroup>
 
 </Project>

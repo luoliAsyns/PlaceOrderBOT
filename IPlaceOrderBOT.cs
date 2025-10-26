@@ -1,4 +1,6 @@
-﻿using LuoliHelper.DBModels;
+﻿using LuoliCommon.DTO.ConsumeInfo;
+using LuoliCommon.DTO.Coupon;
+using LuoliCommon.DTO.ExternalOrder;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -7,15 +9,11 @@ using System.Threading.Tasks;
 
 namespace PlaceOrderBOT
 {
-    internal interface IPlaceOrderBOT
+    public interface IPlaceOrderBOT
     {
-
-        string  QueueName { get; }
-
-        Task<(bool, string)> Validate(MOrder order);
-        Task<(bool, string)> PlaceOrder(MOrder order);
-        Task<(bool, string)> UpdateResult(MOrder order);
-        Task<(bool, string)> PublishResult(MOrder order);
+        (bool, string) Validate(CouponDTO coupon, ExternalOrderDTO eo, ConsumeInfoDTO consumeInfo);
+        Task<(bool, string)> PlaceOrder(CouponDTO coupon, ExternalOrderDTO eo, ConsumeInfoDTO consumeInfo);
+        Task<(bool, string)> UpdateResult(CouponDTO coupon, ExternalOrderDTO eo, ConsumeInfoDTO consumeInfo);
 
     }
 }
