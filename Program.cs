@@ -255,8 +255,7 @@ namespace PlaceOrderBOT
 卡密状态:{EnumHandler.GetDescription((ECouponStatus)coupon.Status)}
 卡密金额:{coupon.AvailableBalance}/{coupon.Payment}
 卡密绑定订单:{coupon.ExternalOrderFromPlatform} - {coupon.ExternalOrderTid}
-订单金额:{externalOrder.PayAmount}
-订单内容:{JsonSerializer.Serialize(externalOrder.SubOrders)}", NotifyUsers);
+订单金额:{externalOrder.PayAmount}", NotifyUsers);
         }
     }
 }
