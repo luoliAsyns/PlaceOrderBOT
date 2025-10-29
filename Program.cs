@@ -137,16 +137,12 @@ namespace PlaceOrderBOT
             services.AddScoped<AsynsApis>(prov =>
             {
                 ILogger logger = prov.GetRequiredService<ILogger>();
-#if DEBUG
                 return new AsynsApis(logger, Config.KVPairs["AsynsApiUrl"]);
-#endif
-                return new AsynsApis(logger, string.Empty);
             });
             services.AddScoped<SexyteaApis>();
             services.AddScoped<IPlaceOrderBOT, SexyteaPlaceOrderBOT>();
             //消费消息
             services.AddHostedService<ConsumerService>();
-
 
             ServiceLocator.Initialize(services.BuildServiceProvider());
 
