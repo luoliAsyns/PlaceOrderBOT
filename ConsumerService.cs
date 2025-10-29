@@ -125,7 +125,7 @@ namespace PlaceOrderBOT
                     _logger.Info($"{Program.Config.ServiceName}订单处理成功 订单号:{eoDto.Tid}, 已付金额:{eoDto.PayAmount}");
 
                     //通知页面刷新
-                    RedisHelper.Publish(RedisKeys.Pub_RefreshPlaceOrderStatus, eoDto.Tid);
+                    RedisHelper.Publish(RedisKeys.Pub_RefreshPlaceOrderStatus, couponDto.Coupon);
 
                     // 处理成功，确认消息
                     await _channel.BasicAckAsync(
