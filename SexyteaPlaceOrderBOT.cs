@@ -85,6 +85,7 @@ namespace PlaceOrderBOT
                 }
                 //付款成功了，coupon可用余额要减掉, 在updateResult里更新
                 coupon.AvailableBalance -= respOrderCreate.Item3;
+                coupon.ProxyOrderId = orderNo;
 
                 return (true, string.Empty);
 
