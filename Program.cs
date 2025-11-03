@@ -14,6 +14,7 @@ using System.Reflection;
 using System.ServiceModel.Channels;
 using System.Text.Json;
 using ThirdApis;
+using ThirdApis.Services.ConsumeInfo;
 using IChannel = RabbitMQ.Client.IChannel;
 using IConnectionFactory = RabbitMQ.Client.IConnectionFactory;
 
@@ -139,6 +140,8 @@ namespace PlaceOrderBOT
                 ILogger logger = prov.GetRequiredService<ILogger>();
                 return new AsynsApis(logger, Config.KVPairs["AsynsApiUrl"]);
             });
+
+            services.AddScoped<IConsumeInfoRepository, ConsumeInfoRepository>();
             services.AddScoped<SexyteaApis>();
             services.AddScoped<IPlaceOrderBOT, SexyteaPlaceOrderBOT>();
             //消费消息
