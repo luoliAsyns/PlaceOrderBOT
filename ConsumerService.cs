@@ -132,12 +132,15 @@ namespace PlaceOrderBOT
                             deliveryTag: ea.DeliveryTag,
                             multiple: false,
                             stoppingToken);
-              
+
+                    RedisHelper.IncrByAsync(RedisKeys.Prom_PlacedOrders);
+                    RedisHelper.SRemAsync(RedisKeys.NotUsedCoupons, couponDto.Coupon);
                 }
                 catch (Exception ex)
                 {
                     _logger.Error("while ConsumerService consuming");
                     _logger.Error(ex.Message);
+                    RedisHelper.IncrByAsync(RedisKeys.Prom_PlacedOrdersFailed);
                     // 处理异常，记录日志
                     // 异常情况下不确认消息，不重新入队
                     await _channel.BasicNackAsync(
@@ -152,6 +155,7 @@ MQ 消费过程中异常
 
 message:[{message}]", Program.NotifyUsers);
                 }
+
             };
 
             // 开始消费
@@ -177,7 +181,7 @@ message:[{message}]", Program.NotifyUsers);
         {
             var CI = (await _asynsApis.ConsumeInfoQuery(externalOrder.TargetProxy.ToString() + "_consume_info", coupon.Coupon)).data;
             RedisHelper.Publish(RedisKeys.Pub_RefreshPlaceOrderStatus, externalOrder.Tid);
-
+            RedisHelper.IncrByAsync(RedisKeys.Prom_PlacedOrdersFailed);
             _asynsApis.CouponUpdate(new LuoliCommon.DTO.Coupon.UpdateRequest()
             {
                 Coupon = coupon,
