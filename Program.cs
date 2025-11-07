@@ -15,6 +15,7 @@ using System.ServiceModel.Channels;
 using System.Text.Json;
 using ThirdApis;
 using ThirdApis.Services.ConsumeInfo;
+using ThirdApis.Services.Coupon;
 using IChannel = RabbitMQ.Client.IChannel;
 using IConnectionFactory = RabbitMQ.Client.IConnectionFactory;
 
@@ -142,8 +143,12 @@ namespace PlaceOrderBOT
             });
 
             services.AddScoped<IConsumeInfoRepository, ConsumeInfoRepository>();
-            services.AddScoped<SexyteaApis>();
+            services.AddScoped<ICouponRepository, CouponRepository>();
             services.AddScoped<IPlaceOrderBOT, SexyteaPlaceOrderBOT>();
+
+
+            services.AddScoped<SexyteaApis>();
+
             //消费消息
             services.AddHostedService<ConsumerService>();
 
