@@ -145,10 +145,10 @@ namespace PlaceOrderBOT
                 _= _couponRepository.UpdateErrorCode(new UpdateErrorCodeRequest() { Coupon=coupon.Coupon, ErrorCode = ECouponErrorCode.CouponStatusNotMacth}).Result;
                 return (false, $"CouponDTO Status:[{coupon.Status.ToString()}], must be [ECouponStatus.Shipped]");
             }
-            if (coupon.Payment != coupon.AvailableBalance)
+            if (coupon.CreditLimit != coupon.AvailableBalance)
             {
                 _ = _couponRepository.UpdateErrorCode(new UpdateErrorCodeRequest() { Coupon = coupon.Coupon, ErrorCode = ECouponErrorCode.CouponPaymentNotEqualABalance }).Result;
-                return (false, $"CouponDTO Payment[{coupon.Payment}] must be equal to AvailableBalance[{coupon.AvailableBalance}]");
+                return (false, $"CouponDTO CreditLimit[{coupon.CreditLimit}] must be equal to AvailableBalance[{coupon.AvailableBalance}]");
             }
             if (eo.Status == LuoliCommon.Enums.EExternalOrderStatus.Refunding)
             {
