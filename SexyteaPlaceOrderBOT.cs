@@ -107,7 +107,7 @@ namespace PlaceOrderBOT
                 coupon.AvailableBalance -= respOrderCreate.Item3;
                 coupon.ProxyOrderId = orderNo;
                 //记录下单的代理账号
-                coupon.ProxyOpenId= account.OpenId;
+                coupon.ProxyOpenId= account.phone;
 
                 return (true, string.Empty);
 
