@@ -13,6 +13,7 @@ using System.Threading.Tasks;
 using ThirdApis;
 using ThirdApis.Services.ConsumeInfo;
 using ThirdApis.Services.Coupon;
+using static Azure.Core.HttpHeader;
 
 namespace PlaceOrderBOT
 {
@@ -62,8 +63,31 @@ namespace PlaceOrderBOT
                 int branchId = consumeInfo.Goods.BranchId;
                 List<OrderItem> orderItems = consumeInfo.Goods.OrderItems;
 
-                //创建订单
-                var respOrderCreate = await _sexyteaApis.OrderCreate(account, branchId, orderItems, consumeInfo.LastName, consumeInfo.Remark, coupon.CreditLimit);
+
+                //判断是否能够全额使用积点
+
+                decimal currentAllPoint = 0;
+                try
+                {
+                    var userInfoStr = await _sexyteaApis.UserInfo(account);
+                    JsonDocument userInfoJson = JsonDocument.Parse(userInfoStr);
+                    currentAllPoint = userInfoJson.RootElement.GetProperty("data").GetProperty("accountInfo").GetProperty("fPoint").GetDecimal();
+                }
+                catch (Exception ex)
+                {
+                    _logger.Error($"SexyteaPlaceOrderBOT.PlaceOrder 获取用户信息失败 tid:[{eo.Tid}]");
+                    _logger.Error(ex.Message);
+                    return (false, "获取用户信息失败");
+                }
+
+                int selectPoint = 0;
+                if (currentAllPoint * 2 > coupon.AvailableBalance)
+                    selectPoint = 1;
+
+                _logger.Info($"卡密[{coupon.Coupon}] 查到积点[{currentAllPoint}] 当前可消费金额[{coupon.AvailableBalance}] 决定{(selectPoint==0?"不":"")}使用积分");
+
+               //创建订单
+               var respOrderCreate = await _sexyteaApis.OrderCreate(account, branchId, orderItems, consumeInfo.LastName, consumeInfo.Remark, coupon.CreditLimit, selectPoint);
                 if (!respOrderCreate.Item1)
                 {
                     _logger.Error($"SexyteaPlaceOrderBOT.PlaceOrder 茶颜订单创建失败 tid:[{eo.Tid}]");
