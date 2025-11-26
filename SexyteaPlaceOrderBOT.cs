@@ -118,6 +118,20 @@ namespace PlaceOrderBOT
                 }
 
                 var payAmount = respOrderPayCal.Item2;
+
+                //全积点支付
+                if(payAmount == 0)
+                {
+                    //付款成功了，coupon可用余额要减掉, 在updateResult里更新
+                    coupon.AvailableBalance -= respOrderCreate.Item3;
+                    coupon.ProxyOrderId = orderNo;
+                    //记录下单的代理账号
+                    coupon.ProxyOpenId = account.phone;
+
+                    return (true, string.Empty);
+                }
+
+
                 //付款
                 var respOrderPay = await _sexyteaApis.OrderPay(account, orderNo, payAmount);
                 if (!respOrderPay)
