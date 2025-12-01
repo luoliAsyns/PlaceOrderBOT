@@ -1,4 +1,5 @@
-﻿using LuoliCommon.DTO.ConsumeInfo;
+﻿using LuoliCommon;
+using LuoliCommon.DTO.ConsumeInfo;
 using LuoliCommon.DTO.ConsumeInfo.Sexytea;
 using LuoliCommon.DTO.Coupon;
 using LuoliCommon.DTO.ExternalOrder;
@@ -66,12 +67,15 @@ namespace PlaceOrderBOT
 
                 //判断是否能够全额使用积点
 
-                decimal currentAllPoint = 0;
+                int selectPoint = 0;
                 try
                 {
                     var userInfoStr = await _sexyteaApis.UserInfo(account);
                     JsonDocument userInfoJson = JsonDocument.Parse(userInfoStr);
-                    currentAllPoint = userInfoJson.RootElement.GetProperty("data").GetProperty("accountInfo").GetProperty("fPoint").GetDecimal();
+
+                    selectPoint = calOrderMode(coupon, userInfoJson, coupon.AvailableBalance / 2.0m + 1m);
+
+                    notifyWhileBalanceNotEnough(userInfoJson, 200m);
                 }
                 catch (Exception ex)
                 {
@@ -79,15 +83,10 @@ namespace PlaceOrderBOT
                     _logger.Error(ex.Message);
                     return (false, "获取用户信息失败");
                 }
-
-                int selectPoint = 0;
-                if (currentAllPoint * 2 > coupon.AvailableBalance)
-                    selectPoint = 1;
-
-                _logger.Info($"卡密[{coupon.Coupon}] 查到积点[{currentAllPoint}] 当前可消费金额[{coupon.AvailableBalance}] 决定{(selectPoint==0?"不":"")}使用积分");
+              
 
                //创建订单
-               var respOrderCreate = await _sexyteaApis.OrderCreate(account, branchId, orderItems, consumeInfo.LastName, consumeInfo.Remark, coupon.CreditLimit, selectPoint);
+                var respOrderCreate = await _sexyteaApis.OrderCreate(account, branchId, orderItems, consumeInfo.LastName, consumeInfo.Remark, coupon.CreditLimit, selectPoint);
                 if (!respOrderCreate.Item1)
                 {
                     _logger.Error($"SexyteaPlaceOrderBOT.PlaceOrder 茶颜订单创建失败 tid:[{eo.Tid}]");
@@ -134,12 +133,12 @@ namespace PlaceOrderBOT
 
                 //付款
                 var respOrderPay = await _sexyteaApis.OrderPay(account, orderNo, payAmount);
-                if (!respOrderPay)
+                if (!respOrderPay.Item1)
                 {
                     _logger.Error($"SexyteaPlaceOrderBOT.PlaceOrder 茶颜订单付款失败 order_no:[{orderNo}] tid:[{eo.Tid}]");
                     await _couponRepository.UpdateErrorCode(new UpdateErrorCodeRequest() { Coupon = coupon.Coupon, ErrorCode = ECouponErrorCode.AffordOrderFailed });
-
-                    return (false, "付款失败");
+                    
+                    return (false, $"付款失败,{respOrderPay.Item2}");
                 }
                 //付款成功了，coupon可用余额要减掉, 在updateResult里更新
                 coupon.AvailableBalance -= respOrderCreate.Item3;
@@ -158,6 +157,30 @@ namespace PlaceOrderBOT
             }
         }
 
+
+        private void notifyWhileBalanceNotEnough(JsonDocument userInfoJson, decimal threshold)
+        {
+            decimal currentBalance = userInfoJson.RootElement.GetProperty("data").GetProperty("accountInfo").GetProperty("totalBalance").GetDecimal();
+
+            if (currentBalance >= threshold)
+                return;
+
+            ApiCaller.NotifyAsync(@$"当前余额:[{currentBalance}] 低于[{threshold}] 请尽快充值" , Program.NotifyUsers);
+        }
+
+        private int calOrderMode(CouponDTO coupon, JsonDocument userInfoJson, decimal threshold)
+        {
+            decimal currentAllPoint  = userInfoJson.RootElement.GetProperty("data").GetProperty("accountInfo").GetProperty("fPoint").GetDecimal();
+            int selectPoint = 0;
+            if (currentAllPoint > threshold)
+                selectPoint = 1;
+            else
+                selectPoint = 0;
+
+            _logger.Info($"卡密[{coupon.Coupon}] 查到积点[{currentAllPoint}] 当前可消费金额[{coupon.AvailableBalance}] 决定{(selectPoint == 0 ? "不" : "")}使用积分");
+
+            return selectPoint;
+        }
         public async Task<(bool, string)> UpdateResult(CouponDTO coupon, ExternalOrderDTO eo, ConsumeInfoDTO consumeInfo)
         {
             var updateCouponResp = await _couponRepository.Update(new LuoliCommon.DTO.Coupon.UpdateRequest() { Coupon = coupon, Event = EEvent.Placed});
