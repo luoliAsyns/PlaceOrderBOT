@@ -190,7 +190,7 @@ namespace PlaceOrderBOT
             }
             else
             {
-                if (orderPrice >= 20)
+                if (orderPrice > 18 && orderPrice <25)
                     selectPoint = 1;
                 else
                     selectPoint = 0;
