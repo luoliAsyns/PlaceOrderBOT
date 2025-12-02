@@ -73,7 +73,7 @@ namespace PlaceOrderBOT
                     var userInfoStr = await _sexyteaApis.UserInfo(account);
                     JsonDocument userInfoJson = JsonDocument.Parse(userInfoStr);
 
-                    selectPoint = calOrderMode(coupon, userInfoJson, coupon.AvailableBalance / 2.0m + 1m);
+                    selectPoint = calOrderMode(coupon, userInfoJson, coupon.AvailableBalance);
 
                     notifyWhileBalanceNotEnough(userInfoJson, 200m);
                 }
@@ -168,14 +168,34 @@ namespace PlaceOrderBOT
             ApiCaller.NotifyAsync(@$"当前余额:[{currentBalance}] 低于[{threshold}] 请尽快充值" , Program.NotifyUsers);
         }
 
-        private int calOrderMode(CouponDTO coupon, JsonDocument userInfoJson, decimal threshold)
+        private int calOrderMode(CouponDTO coupon, JsonDocument userInfoJson, decimal orderPrice)
         {
             decimal currentAllPoint  = userInfoJson.RootElement.GetProperty("data").GetProperty("accountInfo").GetProperty("fPoint").GetDecimal();
             int selectPoint = 0;
-            if (currentAllPoint > threshold)
-                selectPoint = 1;
+
+
+            //积分使用规则
+            //1. 积分大于100，全部使用积分
+            //2. 积分大于50小于等于100，订单金额大于等于18，使用积分，否则不使用积分
+            //3. 积分小于等于50，订单金额大于等于20，使用积分，否则不使用积分
+
+            if (currentAllPoint > 100)
+               selectPoint = 1;
+            else if (currentAllPoint > 50)
+            {
+                if (orderPrice >= 18)
+                    selectPoint = 1;
+                else
+                    selectPoint = 0;
+            }
             else
-                selectPoint = 0;
+            {
+                if (orderPrice >= 20)
+                    selectPoint = 1;
+                else
+                    selectPoint = 0;
+            }
+                
 
             _logger.Info($"卡密[{coupon.Coupon}] 查到积点[{currentAllPoint}] 当前可消费金额[{coupon.AvailableBalance}] 决定{(selectPoint == 0 ? "不" : "")}使用积分");
 
