@@ -174,23 +174,26 @@ namespace PlaceOrderBOT
             int selectPoint = 0;
 
 
-            //积分使用规则
-            //1. 积分大于100，全部使用积分
-            //2. 积分大于50小于等于100，订单金额大于等于18，使用积分，否则不使用积分
-            //3. 积分小于等于50，订单金额大于等于20，使用积分，否则不使用积分
+            // 多种商品不使用积分
+            // 低价商品不使用积分 
 
-            if (currentAllPoint > 100)
-               selectPoint = 1;
-            else if (currentAllPoint > 50)
+            if (skuTypes > 1 )
             {
-                if (orderPrice >= 18)
-                    selectPoint = 1;
-                else
-                    selectPoint = 0;
+                _logger.Info($"卡密[{coupon.Coupon}] 购买多种商品，强制不使用积分");
+                return 0;
+            }
+
+            //积分使用规则
+            // 1. 积分大于50，使用积分
+            // 2. 积分小于等于50，且订单金额大于等于18元，且积分可以完全抵扣，则使用积分
+
+            if (currentAllPoint > 50)
+            {
+                selectPoint = 1;
             }
             else
             {
-                if (orderPrice > 20 && skuTypes == 1)
+                if (orderPrice >= 18 && (currentAllPoint > orderPrice / 2.0m))
                     selectPoint = 1;
                 else
                     selectPoint = 0;
