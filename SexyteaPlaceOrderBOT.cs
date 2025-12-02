@@ -73,7 +73,7 @@ namespace PlaceOrderBOT
                     var userInfoStr = await _sexyteaApis.UserInfo(account);
                     JsonDocument userInfoJson = JsonDocument.Parse(userInfoStr);
 
-                    selectPoint = calOrderMode(coupon, userInfoJson, coupon.AvailableBalance);
+                    selectPoint = calOrderMode(coupon, userInfoJson, coupon.AvailableBalance, orderItems.Count);
 
                     notifyWhileBalanceNotEnough(userInfoJson, 200m);
                 }
@@ -168,7 +168,7 @@ namespace PlaceOrderBOT
             ApiCaller.NotifyAsync(@$"当前余额:[{currentBalance}] 低于[{threshold}] 请尽快充值" , Program.NotifyUsers);
         }
 
-        private int calOrderMode(CouponDTO coupon, JsonDocument userInfoJson, decimal orderPrice)
+        private int calOrderMode(CouponDTO coupon, JsonDocument userInfoJson, decimal orderPrice, int skuTypes)
         {
             decimal currentAllPoint  = userInfoJson.RootElement.GetProperty("data").GetProperty("accountInfo").GetProperty("fPoint").GetDecimal();
             int selectPoint = 0;
@@ -190,7 +190,7 @@ namespace PlaceOrderBOT
             }
             else
             {
-                if (orderPrice > 18 && orderPrice <25)
+                if (orderPrice > 20 && skuTypes == 1)
                     selectPoint = 1;
                 else
                     selectPoint = 0;
