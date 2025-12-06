@@ -1,4 +1,5 @@
-﻿using LuoliCommon;
+﻿using Azure;
+using LuoliCommon;
 using LuoliCommon.DTO.ConsumeInfo;
 using LuoliCommon.DTO.ConsumeInfo.Sexytea;
 using LuoliCommon.DTO.Coupon;
@@ -23,16 +24,20 @@ namespace PlaceOrderBOT
         private readonly SexyteaApis _sexyteaApis;
         private readonly IConsumeInfoRepository _consumeInfoRepository;
         private readonly ICouponRepository _couponRepository;
+
+        private readonly SexyteaAccRecommend _sexyteaAccRecommend;
         private readonly LuoliCommon.Logger.ILogger _logger;
         public SexyteaPlaceOrderBOT(
             SexyteaApis sexyteaApis,
             IConsumeInfoRepository consumeInfoRepository,
             ICouponRepository couponRepository,
+            SexyteaAccRecommend sexyteaAccRecommend,
               LuoliCommon.Logger.ILogger logger)
         {
             _sexyteaApis = sexyteaApis;
             _consumeInfoRepository = consumeInfoRepository;
             _couponRepository = couponRepository;
+            _sexyteaAccRecommend = sexyteaAccRecommend;
             _logger = logger;
         }
 
@@ -50,11 +55,28 @@ namespace PlaceOrderBOT
             {
                 var consumeInfo = JsonSerializer.Deserialize<ConsumeInfoDTO<SexyteaGoods>>(JsonSerializer.Serialize(consumeInfoInput), _options);
 
-                var account =await RedisHelper.GetAsync<Account>(RedisKeys.SexyteaTokenAccount);
-
-                if(account is null)
+                var accounts = await RedisHelper.HGetAllAsync<Account>(RedisKeys.SexyteaTokenAccount);
+                var orderCounts = await RedisHelper.HGetAllAsync<int>(RedisKeys.SexyteaTokenPlaceOrdersCount);
+                foreach (var kvp in accounts)
                 {
-                    string msg = "SexyteaPlaceOrderBOT.PlaceOrder 代理账号token过期";
+                    string key = kvp.Key;       // 共享的key（如用户ID/IP等）
+
+                    if (orderCounts.TryGetValue(key, out int count))
+                        kvp.Value.TodayOrdersCount = count;
+                    else
+                        kvp.Value.TodayOrdersCount = 0;
+                }
+
+                if (!_sexyteaAccRecommend.ExistValidAcc(accounts))
+                {
+                    string msg = "当前无可用茶颜账户，请联系客服";
+                    return (false, msg);
+                }
+
+                var account = _sexyteaAccRecommend.Recommend(coupon.Coupon, accounts);
+                if (account is null)
+                {
+                    string msg = "SexyteaPlaceOrderBOT.PlaceOrder 无可用茶颜代理账号";
                     _logger.Error(msg);
                     await _couponRepository.UpdateErrorCode(new UpdateErrorCodeRequest() { Coupon = coupon.Coupon, ErrorCode = ECouponErrorCode.TokenExpired });
 
@@ -145,6 +167,8 @@ namespace PlaceOrderBOT
                 coupon.ProxyOrderId = orderNo;
                 //记录下单的代理账号
                 coupon.ProxyOpenId= account.phone;
+
+                await RedisHelper.HIncrByAsync(RedisKeys.SexyteaTokenPlaceOrdersCount, account.phone);
 
                 return (true, string.Empty);
 

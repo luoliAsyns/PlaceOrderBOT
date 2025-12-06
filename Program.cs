@@ -150,6 +150,7 @@ namespace PlaceOrderBOT
 
 
             services.AddScoped<SexyteaApis>();
+            services.AddSingleton<SexyteaAccRecommend>();
 
             //消费消息
             services.AddHostedService<ConsumerService>();
