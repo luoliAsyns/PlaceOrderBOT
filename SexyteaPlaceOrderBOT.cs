@@ -57,19 +57,14 @@ namespace PlaceOrderBOT
 
                 var accounts = await RedisHelper.HGetAllAsync<Account>(RedisKeys.SexyteaTokenAccount);
                 var orderCounts = await RedisHelper.HGetAllAsync<int>(RedisKeys.SexyteaTokenPlaceOrdersCount);
-                foreach (var kvp in accounts)
-                {
-                    string key = kvp.Key;       // 共享的key（如用户ID/IP等）
-
-                    if (orderCounts.TryGetValue(key, out int count))
-                        kvp.Value.TodayOrdersCount = count;
-                    else
-                        kvp.Value.TodayOrdersCount = 0;
-                }
+                _sexyteaAccRecommend.MergeData(accounts, orderCounts);
 
                 if (!_sexyteaAccRecommend.ExistValidAcc(accounts))
                 {
                     string msg = "当前无可用茶颜账户，请联系客服";
+                    _logger.Error(msg);
+                    await _couponRepository.UpdateErrorCode(new UpdateErrorCodeRequest() { Coupon = coupon.Coupon, ErrorCode = ECouponErrorCode.TokenExpired });
+
                     return (false, msg);
                 }
 
@@ -107,7 +102,7 @@ namespace PlaceOrderBOT
                 }
               
 
-               //创建订单
+                //创建订单
                 var respOrderCreate = await _sexyteaApis.OrderCreate(account, branchId, orderItems, consumeInfo.LastName, consumeInfo.Remark, coupon.CreditLimit, selectPoint);
                 if (!respOrderCreate.Item1)
                 {
@@ -125,6 +120,8 @@ namespace PlaceOrderBOT
 
                     return (false, msg);
                 }
+
+                await RedisHelper.HIncrByAsync(RedisKeys.SexyteaTokenPlaceOrdersCount, account.phone);
 
 
                 //此时订单已经创建成功
@@ -168,7 +165,6 @@ namespace PlaceOrderBOT
                 //记录下单的代理账号
                 coupon.ProxyOpenId= account.phone;
 
-                await RedisHelper.HIncrByAsync(RedisKeys.SexyteaTokenPlaceOrdersCount, account.phone);
 
                 return (true, string.Empty);
 
