@@ -56,8 +56,6 @@ namespace PlaceOrderBOT
                 var consumeInfo = JsonSerializer.Deserialize<ConsumeInfoDTO<SexyteaGoods>>(JsonSerializer.Serialize(consumeInfoInput), _options);
 
                 var accounts = await RedisHelper.HGetAllAsync<Account>(RedisKeys.SexyteaTokenAccount);
-                var orderCounts = await RedisHelper.HGetAllAsync<int>(RedisKeys.SexyteaTokenPlaceOrdersCount);
-                _sexyteaAccRecommend.MergeData(accounts, orderCounts);
 
                 if (!_sexyteaAccRecommend.ExistValidAcc(accounts))
                 {
@@ -121,7 +119,8 @@ namespace PlaceOrderBOT
                     return (false, msg);
                 }
 
-                await RedisHelper.HIncrByAsync(RedisKeys.SexyteaTokenPlaceOrdersCount, account.phone);
+                account.TodayOrdersCount += 1;
+                await RedisHelper.HSetAsync(RedisKeys.SexyteaTokenAccount, account.Phone, account);
 
 
                 //此时订单已经创建成功
@@ -144,7 +143,7 @@ namespace PlaceOrderBOT
                     coupon.AvailableBalance -= respOrderCreate.Item3;
                     coupon.ProxyOrderId = orderNo;
                     //记录下单的代理账号
-                    coupon.ProxyOpenId = account.phone;
+                    coupon.ProxyOpenId = account.Phone;
 
                     return (true, string.Empty);
                 }
@@ -163,7 +162,7 @@ namespace PlaceOrderBOT
                 coupon.AvailableBalance -= respOrderCreate.Item3;
                 coupon.ProxyOrderId = orderNo;
                 //记录下单的代理账号
-                coupon.ProxyOpenId= account.phone;
+                coupon.ProxyOpenId= account.Phone;
 
 
                 return (true, string.Empty);
