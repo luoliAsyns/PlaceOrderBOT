@@ -134,7 +134,7 @@ namespace PlaceOrderBOT
                             stoppingToken);
 
                     RedisHelper.IncrByAsync(RedisKeys.Prom_PlacedOrders);
-                    RedisHelper.SRemAsync(RedisKeys.NotUsedCoupons, couponDto.Coupon);
+                   
                 }
                 catch (Exception ex)
                 {
