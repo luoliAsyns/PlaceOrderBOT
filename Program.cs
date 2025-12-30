@@ -3,6 +3,7 @@ using LuoliCommon.DTO.ConsumeInfo.Sexytea;
 using LuoliCommon.DTO.Coupon;
 using LuoliCommon.DTO.ExternalOrder;
 using LuoliCommon.Enums;
+using LuoliCommon.Interfaces;
 using LuoliCommon.Logger;
 using LuoliHelper.Utils;
 using LuoliUtils;
@@ -10,12 +11,11 @@ using Microsoft.AspNetCore.Connections;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using RabbitMQ.Client;
+using Refit;
 using System.Reflection;
 using System.ServiceModel.Channels;
 using System.Text.Json;
 using ThirdApis;
-using ThirdApis.Services.ConsumeInfo;
-using ThirdApis.Services.Coupon;
 using IChannel = RabbitMQ.Client.IChannel;
 using IConnectionFactory = RabbitMQ.Client.IConnectionFactory;
 
@@ -138,26 +138,31 @@ namespace PlaceOrderBOT
 
             #endregion
 
-            services.AddScoped<AsynsApis>(prov =>
-            {
-                ILogger logger = prov.GetRequiredService<ILogger>();
-                return new AsynsApis(logger, Config.KVPairs["AsynsApiUrl"]);
-            });
-
-            services.AddScoped<IConsumeInfoRepository, ConsumeInfoRepository>();
-            services.AddScoped<ICouponRepository, CouponRepository>();
+           
+       
             services.AddScoped<IPlaceOrderBOT, SexyteaPlaceOrderBOT>();
 
-
             services.AddScoped<SexyteaApis>();
+
+            #region 注册 Refit部分   4个带数据库的服务
+
+            services.AddRefitClient<IExternalOrderService>()
+                .ConfigureHttpClient(c => c.BaseAddress = new Uri($"http://{Config.KVPairs["StartWith"]}external-order-service:8080"));
+            services.AddRefitClient<ICouponService>()
+                .ConfigureHttpClient(c => c.BaseAddress = new Uri($"http://{Config.KVPairs["StartWith"]}coupon-service:8080"));
+            services.AddRefitClient<IConsumeInfoService>()
+                .ConfigureHttpClient(c => c.BaseAddress = new Uri($"http://{Config.KVPairs["StartWith"]}consume-info-service:8080"));
+            services.AddRefitClient<IUserService>()
+                .ConfigureHttpClient(c => c.BaseAddress = new Uri($"http://{Config.KVPairs["StartWith"]}user-service:8080"));
+
+            #endregion
+
             services.AddSingleton<SexyteaAccRecommend>();
 
             //消费消息
             services.AddHostedService<ConsumerService>();
 
             ServiceLocator.Initialize(services.BuildServiceProvider());
-
-            _logger = ServiceLocator.GetService<LuoliCommon.Logger.ILogger>();
 
             #region luoli code
 

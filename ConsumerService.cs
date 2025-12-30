@@ -4,8 +4,10 @@ using LuoliCommon.DTO.Agiso;
 using LuoliCommon.DTO.ConsumeInfo;
 using LuoliCommon.DTO.Coupon;
 using LuoliCommon.DTO.ExternalOrder;
+using LuoliCommon.Interfaces;
 using LuoliUtils;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
@@ -22,11 +24,11 @@ namespace PlaceOrderBOT
     public class ConsumerService : BackgroundService
     {
         private readonly IChannel _channel;
-        private readonly AsynsApis _asynsApis;
         private readonly string _queueName = Program.Config.KVPairs["StartWith"] +  RabbitMQKeys.ConsumeInfoInserted; // 替换为你的队列名
         private readonly LuoliCommon.Logger.ILogger _logger;
 
-        private readonly IPlaceOrderBOT Bot;
+        private readonly IPlaceOrderBOT _bot;
+        private readonly IServiceProvider _serviceProvider;
 
         private static JsonSerializerOptions _options = new JsonSerializerOptions
         {
@@ -35,15 +37,15 @@ namespace PlaceOrderBOT
 
 
         public ConsumerService(IChannel channel,
-             AsynsApis asynsApis,
              LuoliCommon.Logger.ILogger logger,
-             IPlaceOrderBOT bot
+             IPlaceOrderBOT bot,
+             IServiceProvider serviceProvider
              )
         {
+            _serviceProvider = serviceProvider;
             _channel = channel;
             _logger = logger;
-            _asynsApis = asynsApis;
-            Bot = bot;
+            _bot = bot;
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -81,60 +83,68 @@ namespace PlaceOrderBOT
 
                     var consumeInfo = JsonSerializer.Deserialize<ConsumeInfoDTO>(message, _options);
 
-                    var couponResp = await _asynsApis.CouponQuery(consumeInfo.Coupon);
-                    var couponDto = couponResp.data;
-                  
-                    var eoResp = await _asynsApis.ExternalOrderQuery(couponDto.ExternalOrderFromPlatform, couponDto.ExternalOrderTid);
-                    var eoDto = eoResp.data;
-                    
-                    if (!eoResp.ok && !couponResp.ok)
+
+                    using (var scope = _serviceProvider.CreateScope())
                     {
-                        _logger.Error("订单/卡密查询失败");
-                        Notify(couponDto, eoDto, "订单/卡密查询失败", ea.DeliveryTag, stoppingToken);
-                        return;
+                        ICouponService couponService = scope.ServiceProvider.GetRequiredService<ICouponService>();
+                        IExternalOrderService eoService = scope.ServiceProvider.GetRequiredService<IExternalOrderService>();
+                        IConsumeInfoService cis = scope.ServiceProvider.GetRequiredService<IConsumeInfoService>();
+
+                        var couponResp = await couponService.Query(consumeInfo.Coupon);
+                        var couponDto = couponResp.data;
+
+                        var eoResp = await eoService.Get(couponDto.ExternalOrderFromPlatform, couponDto.ExternalOrderTid);
+                        var eoDto = eoResp.data;
+
+                        if (!eoResp.ok && !couponResp.ok)
+                        {
+                            _logger.Error("订单/卡密查询失败");
+                            Notify(couponDto, eoDto, "订单/卡密查询失败", ea.DeliveryTag, stoppingToken);
+                            return;
+                        }
+                        couponDto = couponResp.data;
+
+                        var (validateResult, validateMsg) = _bot.Validate(couponDto, eoDto, consumeInfo);
+
+                        if (!validateResult)
+                        {
+                            _logger.Error($"订单校验失败:{validateMsg}");
+                            Notify(couponDto, eoDto, $"订单校验失败:{validateMsg}", ea.DeliveryTag, stoppingToken);
+                            return;
+                        }
+
+                        var (placeOrderResult, placeOrderMsg) = await _bot.PlaceOrder(couponDto, eoDto, consumeInfo);
+                        if (!placeOrderResult)
+                        {
+                            _logger.Error($"下单失败:{placeOrderMsg},订单 订单号:{eoDto.Tid}, 已付金额:{eoDto.PayAmount}");
+                            Notify(couponDto, eoDto, $"下单失败:{placeOrderMsg}", ea.DeliveryTag, stoppingToken);
+                            return;
+                        }
+
+
+                        var (updateResult, updateMsg) = await _bot.UpdateResult(couponDto, eoDto, consumeInfo);
+                        if (!updateResult)
+                        {
+                            _logger.Error($"下单后更新信息失败:{updateMsg},订单 订单号:{eoDto.Tid}, 已付金额:{eoDto.PayAmount}");
+                            Notify(couponDto, eoDto, $"下单后更新信息失败:{updateMsg}", ea.DeliveryTag, stoppingToken);
+                            return;
+                        }
+
+
+                        _logger.Info($"{Program.Config.ServiceName}订单处理成功 订单号:{eoDto.Tid}, 已付金额:{eoDto.PayAmount}");
+
+                        //通知页面刷新
+                        RedisHelper.Publish(RedisKeys.Pub_RefreshPlaceOrderStatus, couponDto.Coupon);
+
+                        // 处理成功，确认消息
+                        await _channel.BasicAckAsync(
+                                deliveryTag: ea.DeliveryTag,
+                                multiple: false,
+                                stoppingToken);
+
+                        RedisHelper.IncrByAsync(RedisKeys.Prom_PlacedOrders);
+
                     }
-                    couponDto = couponResp.data;
-
-                    var (validateResult, validateMsg) = Bot.Validate(couponDto, eoDto, consumeInfo);
-
-                    if (!validateResult)
-                    {
-                        _logger.Error($"订单校验失败:{validateMsg}");
-                        Notify(couponDto, eoDto, $"订单校验失败:{validateMsg}", ea.DeliveryTag, stoppingToken);
-                        return;
-                    }
-
-                    var (placeOrderResult, placeOrderMsg) = await Bot.PlaceOrder(couponDto, eoDto, consumeInfo);
-                    if (!placeOrderResult)
-                    {
-                        _logger.Error($"下单失败:{placeOrderMsg},订单 订单号:{eoDto.Tid}, 已付金额:{eoDto.PayAmount}");
-                        Notify(couponDto, eoDto, $"下单失败:{placeOrderMsg}", ea.DeliveryTag, stoppingToken);
-                        return;
-                    }
-
-
-                    var (updateResult, updateMsg) = await Bot.UpdateResult(couponDto, eoDto, consumeInfo);
-                    if (!updateResult)
-                    {
-                        _logger.Error($"下单后更新信息失败:{updateMsg},订单 订单号:{eoDto.Tid}, 已付金额:{eoDto.PayAmount}");
-                        Notify(couponDto, eoDto, $"下单后更新信息失败:{updateMsg}", ea.DeliveryTag, stoppingToken);
-                        return;
-                    }
-
-
-                    _logger.Info($"{Program.Config.ServiceName}订单处理成功 订单号:{eoDto.Tid}, 已付金额:{eoDto.PayAmount}");
-
-                    //通知页面刷新
-                    RedisHelper.Publish(RedisKeys.Pub_RefreshPlaceOrderStatus, couponDto.Coupon);
-
-                    // 处理成功，确认消息
-                    await _channel.BasicAckAsync(
-                            deliveryTag: ea.DeliveryTag,
-                            multiple: false,
-                            stoppingToken);
-
-                    RedisHelper.IncrByAsync(RedisKeys.Prom_PlacedOrders);
-                   
                 }
                 catch (Exception ex)
                 {
@@ -179,36 +189,40 @@ message:[{message}]", Program.NotifyUsers);
 
         private async Task Notify(CouponDTO coupon, ExternalOrderDTO externalOrder, string coreMsg, ulong tag, CancellationToken token)
         {
-            var CI = (await _asynsApis.ConsumeInfoQuery(externalOrder.TargetProxy.ToString() + "_consume_info", coupon.Coupon)).data;
-            RedisHelper.Publish(RedisKeys.Pub_RefreshPlaceOrderStatus, externalOrder.Tid);
-            RedisHelper.IncrByAsync(RedisKeys.Prom_PlacedOrdersFailed);
-            _asynsApis.CouponUpdate(new LuoliCommon.DTO.Coupon.UpdateRequest()
+
+            using (var scope = _serviceProvider.CreateScope())
             {
-                Coupon = coupon,
-                Event = LuoliCommon.Enums.EEvent.PlaceFailed
-            });
+                ICouponService couponService = scope.ServiceProvider.GetRequiredService<ICouponService>();
+                IExternalOrderService eoService = scope.ServiceProvider.GetRequiredService<IExternalOrderService>();
+                IConsumeInfoService cis = scope.ServiceProvider.GetRequiredService<IConsumeInfoService>();
 
-            _asynsApis.ConsumeInfoUpdate(new LuoliCommon.DTO.ConsumeInfo.UpdateRequest()
-            {
-                CI = CI,
-                Event = LuoliCommon.Enums.EEvent.PlaceFailed
-            }); 
+                var CI = (await cis.GetAsync(externalOrder.TargetProxy.ToString() + "_consume_info", coupon.Coupon)).data;
+                await RedisHelper.PublishAsync(RedisKeys.Pub_RefreshPlaceOrderStatus, externalOrder.Tid);
+                await RedisHelper.IncrByAsync(RedisKeys.Prom_PlacedOrdersFailed);
+                await couponService.Update(new LuoliCommon.DTO.Coupon.UpdateRequest()
+                {
+                    Coupon = coupon,
+                    Event = LuoliCommon.Enums.EEvent.PlaceFailed
+                });
 
-            _channel.BasicNackAsync(
-                      deliveryTag: tag,
-                      multiple: false,
-                      requeue: false,
-                      token);
+                await cis.UpdateAsync(new LuoliCommon.DTO.ConsumeInfo.UpdateRequest()
+                {
+                    CI = CI,
+                    Event = LuoliCommon.Enums.EEvent.PlaceFailed
+                });
+            }
+
+            await _channel.BasicNackAsync(
+                          deliveryTag: tag,
+                          multiple: false,
+                          requeue: false,
+                          token);
 
 
-            Program.Notify(
-                coupon,
-                externalOrder,
-                coreMsg);
+                Program.Notify(
+                    coupon,
+                    externalOrder,
+                    coreMsg);
         }
-
     }
-
-
-
 }

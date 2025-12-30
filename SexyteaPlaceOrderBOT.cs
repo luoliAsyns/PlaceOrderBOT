@@ -5,6 +5,7 @@ using LuoliCommon.DTO.ConsumeInfo.Sexytea;
 using LuoliCommon.DTO.Coupon;
 using LuoliCommon.DTO.ExternalOrder;
 using LuoliCommon.Enums;
+using LuoliCommon.Interfaces;
 using LuoliUtils;
 using System;
 using System.Collections.Generic;
@@ -13,8 +14,6 @@ using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 using ThirdApis;
-using ThirdApis.Services.ConsumeInfo;
-using ThirdApis.Services.Coupon;
 using static Azure.Core.HttpHeader;
 
 namespace PlaceOrderBOT
@@ -22,21 +21,21 @@ namespace PlaceOrderBOT
     public class SexyteaPlaceOrderBOT : IPlaceOrderBOT
     {
         private readonly SexyteaApis _sexyteaApis;
-        private readonly IConsumeInfoRepository _consumeInfoRepository;
-        private readonly ICouponRepository _couponRepository;
+        private readonly IConsumeInfoService _consumeInfoService;
+        private readonly ICouponService _couponService;
 
         private readonly SexyteaAccRecommend _sexyteaAccRecommend;
         private readonly LuoliCommon.Logger.ILogger _logger;
         public SexyteaPlaceOrderBOT(
             SexyteaApis sexyteaApis,
-            IConsumeInfoRepository consumeInfoRepository,
-            ICouponRepository couponRepository,
+            IConsumeInfoService consumeInfoRepository,
+            ICouponService couponRepository,
             SexyteaAccRecommend sexyteaAccRecommend,
               LuoliCommon.Logger.ILogger logger)
         {
             _sexyteaApis = sexyteaApis;
-            _consumeInfoRepository = consumeInfoRepository;
-            _couponRepository = couponRepository;
+            _consumeInfoService = consumeInfoRepository;
+            _couponService = couponRepository;
             _sexyteaAccRecommend = sexyteaAccRecommend;
             _logger = logger;
         }
@@ -61,7 +60,7 @@ namespace PlaceOrderBOT
                 {
                     string msg = "当前无可用茶颜账户，请联系客服";
                     _logger.Error(msg);
-                    await _couponRepository.UpdateErrorCode(new UpdateErrorCodeRequest() { Coupon = coupon.Coupon, ErrorCode = ECouponErrorCode.TokenExpired });
+                    await _couponService.UpdateErrorCode(new UpdateErrorCodeRequest() { Coupon = coupon.Coupon, ErrorCode = ECouponErrorCode.TokenExpired });
 
                     return (false, msg);
                 }
@@ -71,7 +70,7 @@ namespace PlaceOrderBOT
                 {
                     string msg = "SexyteaPlaceOrderBOT.PlaceOrder 无可用茶颜代理账号";
                     _logger.Error(msg);
-                    await _couponRepository.UpdateErrorCode(new UpdateErrorCodeRequest() { Coupon = coupon.Coupon, ErrorCode = ECouponErrorCode.TokenExpired });
+                    await _couponService.UpdateErrorCode(new UpdateErrorCodeRequest() { Coupon = coupon.Coupon, ErrorCode = ECouponErrorCode.TokenExpired });
 
                     return (false, msg);
                 }
@@ -105,7 +104,7 @@ namespace PlaceOrderBOT
                 if (!respOrderCreate.Item1)
                 {
                     _logger.Error($"SexyteaPlaceOrderBOT.PlaceOrder 茶颜订单创建失败 tid:[{eo.Tid}]");
-                    await _couponRepository.UpdateErrorCode(new UpdateErrorCodeRequest() { Coupon = coupon.Coupon, ErrorCode = ECouponErrorCode.CreateOrderFailed });
+                    await _couponService.UpdateErrorCode(new UpdateErrorCodeRequest() { Coupon = coupon.Coupon, ErrorCode = ECouponErrorCode.CreateOrderFailed });
 
                     return (false, respOrderCreate.Item2);
                 }
@@ -114,7 +113,7 @@ namespace PlaceOrderBOT
                 {
                     string msg = $"SexyteaPlaceOrderBOT.PlaceOrder 茶颜订单停止下单，创建订单的金额[{respOrderCreate.Item3}] 超出可用余额[{coupon.AvailableBalance}] tid:[{eo.Tid}]";
                     _logger.Error(msg);
-                    await _couponRepository.UpdateErrorCode(new UpdateErrorCodeRequest() { Coupon = coupon.Coupon, ErrorCode = ECouponErrorCode.CouponBalanceNotEnough });
+                    await _couponService.UpdateErrorCode(new UpdateErrorCodeRequest() { Coupon = coupon.Coupon, ErrorCode = ECouponErrorCode.CouponBalanceNotEnough });
 
                     return (false, msg);
                 }
@@ -154,7 +153,7 @@ namespace PlaceOrderBOT
                 if (!respOrderPay.Item1)
                 {
                     _logger.Error($"SexyteaPlaceOrderBOT.PlaceOrder 茶颜订单付款失败 order_no:[{orderNo}] tid:[{eo.Tid}]");
-                    await _couponRepository.UpdateErrorCode(new UpdateErrorCodeRequest() { Coupon = coupon.Coupon, ErrorCode = ECouponErrorCode.AffordOrderFailed });
+                    await _couponService.UpdateErrorCode(new UpdateErrorCodeRequest() { Coupon = coupon.Coupon, ErrorCode = ECouponErrorCode.AffordOrderFailed });
                     
                     return (false, $"付款失败,{respOrderPay.Item2}");
                 }
@@ -225,16 +224,16 @@ namespace PlaceOrderBOT
         }
         public async Task<(bool, string)> UpdateResult(CouponDTO coupon, ExternalOrderDTO eo, ConsumeInfoDTO consumeInfo)
         {
-            var updateCouponResp = await _couponRepository.Update(new LuoliCommon.DTO.Coupon.UpdateRequest() { Coupon = coupon, Event = EEvent.Placed});
+            var updateCouponResp = await _couponService.Update(new LuoliCommon.DTO.Coupon.UpdateRequest() { Coupon = coupon, Event = EEvent.Placed});
             if (!updateCouponResp.ok)
             {
-                await _couponRepository.UpdateErrorCode(new UpdateErrorCodeRequest() { Coupon = coupon.Coupon, ErrorCode = ECouponErrorCode.UpdateCouponFailed });
+                await _couponService.UpdateErrorCode(new UpdateErrorCodeRequest() { Coupon = coupon.Coupon, ErrorCode = ECouponErrorCode.UpdateCouponFailed });
                 return (false, $"CouponDTO Update failed:{updateCouponResp.msg}");
             }
-            var updateCIResp = await _consumeInfoRepository.ConsumeInfoUpdate(new LuoliCommon.DTO.ConsumeInfo.UpdateRequest() { CI = consumeInfo, Event = EEvent.Placed });
+            var updateCIResp = await _consumeInfoService.UpdateAsync(new LuoliCommon.DTO.ConsumeInfo.UpdateRequest() { CI = consumeInfo, Event = EEvent.Placed });
             if (!updateCIResp.ok)
             {
-                await _couponRepository.UpdateErrorCode(new UpdateErrorCodeRequest() { Coupon = coupon.Coupon, ErrorCode = ECouponErrorCode.UpdateCIFailed });
+                await _couponService.UpdateErrorCode(new UpdateErrorCodeRequest() { Coupon = coupon.Coupon, ErrorCode = ECouponErrorCode.UpdateCIFailed });
                 return (false, $"ConsumeInfoDTO Update failed:{updateCouponResp.msg}");
             }
 
@@ -245,22 +244,22 @@ namespace PlaceOrderBOT
         {
             if (coupon.Status != LuoliCommon.Enums.ECouponStatus.Shipped)
             {
-                _= _couponRepository.UpdateErrorCode(new UpdateErrorCodeRequest() { Coupon=coupon.Coupon, ErrorCode = ECouponErrorCode.CouponStatusNotMacth}).Result;
+                _= _couponService.UpdateErrorCode(new UpdateErrorCodeRequest() { Coupon=coupon.Coupon, ErrorCode = ECouponErrorCode.CouponStatusNotMacth}).Result;
                 return (false, $"CouponDTO Status:[{coupon.Status.ToString()}], must be [ECouponStatus.Shipped]");
             }
             if (coupon.CreditLimit != coupon.AvailableBalance)
             {
-                _ = _couponRepository.UpdateErrorCode(new UpdateErrorCodeRequest() { Coupon = coupon.Coupon, ErrorCode = ECouponErrorCode.CouponPaymentNotEqualABalance }).Result;
+                _ = _couponService.UpdateErrorCode(new UpdateErrorCodeRequest() { Coupon = coupon.Coupon, ErrorCode = ECouponErrorCode.CouponPaymentNotEqualABalance }).Result;
                 return (false, $"CouponDTO CreditLimit[{coupon.CreditLimit}] must be equal to AvailableBalance[{coupon.AvailableBalance}]");
             }
             if (eo.Status == LuoliCommon.Enums.EExternalOrderStatus.Refunding)
             {
-                _ = _couponRepository.UpdateErrorCode(new UpdateErrorCodeRequest() { Coupon = coupon.Coupon, ErrorCode = ECouponErrorCode.EOReceivedRefund }).Result;
+                _ = _couponService.UpdateErrorCode(new UpdateErrorCodeRequest() { Coupon = coupon.Coupon, ErrorCode = ECouponErrorCode.EOReceivedRefund }).Result;
                 return (false, $"ExternalOrderDTO Status[{eo.Status.ToString()}], so do not process");
             }
             if (consumeInfo.Status != LuoliCommon.Enums.EConsumeInfoStatus.Pulled)
             {
-                _ = _couponRepository.UpdateErrorCode(new UpdateErrorCodeRequest() { Coupon = coupon.Coupon, ErrorCode = ECouponErrorCode.CIStatusNotMacth }).Result;
+                _ = _couponService.UpdateErrorCode(new UpdateErrorCodeRequest() { Coupon = coupon.Coupon, ErrorCode = ECouponErrorCode.CIStatusNotMacth }).Result;
                 return (false, $"ConsumeInfoDTO Status[{consumeInfo.Status.ToString()}] must be equal to [EConsumeInfoStatus.Pulled]");
             }
 
