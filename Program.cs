@@ -15,6 +15,7 @@ using Refit;
 using System.Reflection;
 using System.ServiceModel.Channels;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using ThirdApis;
 using IChannel = RabbitMQ.Client.IChannel;
 using IConnectionFactory = RabbitMQ.Client.IConnectionFactory;
@@ -78,6 +79,20 @@ namespace PlaceOrderBOT
             }
 
             #endregion
+
+
+            var jsonSerializerOptions = new JsonSerializerOptions
+            {
+                // 关键配置：将Enum转换为对应的数字值（整数值）
+                Converters = { new JsonStringEnumConverter(allowIntegerValues: true) },
+                // 可选：保留其他默认序列化配置（根据你的业务需求添加）
+                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                WriteIndented = false
+            };
+            var refitSetting = new RefitSettings()
+            {
+                ContentSerializer = new SystemTextJsonContentSerializer(jsonSerializerOptions)
+            };
 
 
             var services = new ServiceCollection();
@@ -146,13 +161,13 @@ namespace PlaceOrderBOT
 
             #region 注册 Refit部分   4个带数据库的服务
 
-            services.AddRefitClient<IExternalOrderService>()
+            services.AddRefitClient<IExternalOrderService>(refitSetting)
                 .ConfigureHttpClient(c => c.BaseAddress = new Uri($"http://{Config.KVPairs["StartWith"]}external-order-service:8080"));
-            services.AddRefitClient<ICouponService>()
+            services.AddRefitClient<ICouponService>(refitSetting)
                 .ConfigureHttpClient(c => c.BaseAddress = new Uri($"http://{Config.KVPairs["StartWith"]}coupon-service:8080"));
-            services.AddRefitClient<IConsumeInfoService>()
+            services.AddRefitClient<IConsumeInfoService>(refitSetting)
                 .ConfigureHttpClient(c => c.BaseAddress = new Uri($"http://{Config.KVPairs["StartWith"]}consume-info-service:8080"));
-            services.AddRefitClient<IUserService>()
+            services.AddRefitClient<IUserService>(refitSetting)
                 .ConfigureHttpClient(c => c.BaseAddress = new Uri($"http://{Config.KVPairs["StartWith"]}user-service:8080"));
 
             #endregion
