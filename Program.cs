@@ -81,18 +81,7 @@ namespace PlaceOrderBOT
             #endregion
 
 
-            var jsonSerializerOptions = new JsonSerializerOptions
-            {
-                // 关键配置：将Enum转换为对应的数字值（整数值）
-                Converters = { new JsonStringEnumConverter(allowIntegerValues: true) },
-                // 可选：保留其他默认序列化配置（根据你的业务需求添加）
-                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-                WriteIndented = false
-            };
-            var refitSetting = new RefitSettings()
-            {
-                ContentSerializer = new SystemTextJsonContentSerializer(jsonSerializerOptions)
-            };
+            var refitSetting = RefitSetting.LuoliRefitSettings();
 
 
             var services = new ServiceCollection();
